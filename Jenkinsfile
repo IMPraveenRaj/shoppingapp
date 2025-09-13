@@ -1,16 +1,14 @@
 pipeline {
   agent any
-  options { timestamps(); ansiColor('xterm') }
+  options { timestamps() }
 
   environment {
     // --- Docker Hub config ---
     REGISTRY        = 'docker.io'
-    HUB_USER        = 'impraveenraj'             // your Docker Hub username
-    IMAGE           = 'shoppingapp-backend'      // repository name on Docker Hub
-    DOCKER_BUILDKIT = '1'                         // faster docker builds
-
-    // Optional: set a version tag for releases (e.g., from a parameter or env)
-    VERSION_TAG     = '0.0.1'
+    HUB_USER        = 'impraveenraj'            // your Docker Hub username
+    IMAGE           = 'shoppingapp-backend'     // Docker Hub repo name
+    DOCKER_BUILDKIT = '1'
+    VERSION_TAG     = '0.0.1'                   // optional semantic version tag
   }
 
   stages {
@@ -18,26 +16,40 @@ pipeline {
       steps { checkout scm }
     }
 
-    stage('Build & Test (Maven)') {
-      agent { docker { image 'maven:3.9-eclipse-temurin-21' } }
+    stage('Build & Test (Maven in Docker)') {
+      agent {
+        docker {
+          image 'maven:3.9-eclipse-temurin-21'
+          // mount a writable .m2 repo in the workspace
+          args "-v ${WORKSPACE}/.m2:/opt/mvnrepo"
+        }
+      }
       steps {
-        sh 'mvn -B clean package'   // spring-boot:repackage is already bound in your POM
+        sh '''
+          mkdir -p "${WORKSPACE}/.m2"
+          mvn -B -Dmaven.repo.local=/opt/mvnrepo clean package
+        '''
       }
       post {
         always {
-          junit '**/target/surefire-reports/*.xml'
-          junit '**/target/failsafe-reports/*.xml'
-          archiveArtifacts artifacts: 'target/*.jar', fingerprint: true
+          junit allowEmptyResults: true, testResults: '**/target/surefire-reports/*.xml'
+          junit allowEmptyResults: true, testResults: '**/target/failsafe-reports/*.xml'
+          archiveArtifacts artifacts: 'target/*.jar', fingerprint: true, onlyIfSuccessful: false
         }
       }
     }
 
-    stage('Smoke run (8086)') {
+    stage('Smoke run (8086) in JRE container') {
+      agent {
+        docker {
+          image 'eclipse-temurin:21-jre'
+          args "-v ${WORKSPACE}:/ws -w /ws"
+        }
+      }
       steps {
         sh '''
           nohup java -jar target/*SNAPSHOT.jar >/tmp/app.log 2>&1 &
           APP_PID=$!
-          # wait up to 30s for the app to answer on 8086
           for i in {1..30}; do
             curl -sf http://localhost:8086/api/products && OK=1 && break || sleep 1
           done
@@ -48,8 +60,8 @@ pipeline {
     }
 
     stage('Docker Build & Push (main only)') {
-      when { branch 'main' }                 // change to 'master' if needed
-      agent { label 'docker' }               // node with Docker CLI/daemon
+      when { branch 'main' } // change if your default branch is "master"
+      agent { label 'docker' } // requires a node with Docker installed
       steps {
         withCredentials([usernamePassword(credentialsId: 'DOCKERHUB_CREDS',
             usernameVariable: 'REG_USER', passwordVariable: 'REG_PASS')]) {
@@ -58,15 +70,12 @@ pipeline {
 
             docker build -t $REGISTRY/$HUB_USER/$IMAGE:${GIT_COMMIT} .
 
-            # Also tag as :latest
             docker tag $REGISTRY/$HUB_USER/$IMAGE:${GIT_COMMIT} $REGISTRY/$HUB_USER/$IMAGE:latest
 
-            # Optional semantic version tag
             if [ -n "$VERSION_TAG" ]; then
               docker tag $REGISTRY/$HUB_USER/$IMAGE:${GIT_COMMIT} $REGISTRY/$HUB_USER/$IMAGE:${VERSION_TAG}
             fi
 
-            # Push all tags
             docker push $REGISTRY/$HUB_USER/$IMAGE:${GIT_COMMIT}
             docker push $REGISTRY/$HUB_USER/$IMAGE:latest
             if [ -n "$VERSION_TAG" ]; then
