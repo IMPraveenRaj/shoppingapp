@@ -4,17 +4,18 @@ package com.springheaven.shoppingapp.shop;
 
 import org.springframework.web.bind.annotation.*;
 import java.util.*;
+import java.util.concurrent.CopyOnWriteArrayList;
 
 @RestController
 @RequestMapping("/api")
 @CrossOrigin // allow local FE to call this API
 public class ProductController {
 
-    private static final List<Product> PRODUCTS = List.of(
+    private static final List<Product> PRODUCTS = new CopyOnWriteArrayList<>(List.of(
             new Product("sku-1", "Coffee", 3.50),
             new Product("sku-2", "Tea", 2.90),
             new Product("sku-3", "Cookie", 1.20)
-    );
+    ));
 
     @GetMapping("/products")
     public List<Product> products() {
