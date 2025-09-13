@@ -28,4 +28,11 @@ public class ProductController {
                 .findFirst()
                 .orElseThrow(() -> new NoSuchElementException("Product not found: " + id));
     }
+
+    // ✅ POST endpoint to add a new product
+    @PostMapping("/products")
+    public Product addProduct(@RequestBody Product product) {
+        PRODUCTS.add(product);
+        return product; // return what was added
+    }
 }
